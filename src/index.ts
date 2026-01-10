@@ -1,6 +1,24 @@
 /**
  * MetaMesh Plugin: file-info
- * Entry point
+ *
+ * ============================================================================
+ * PLUGIN MOUNT ARCHITECTURE - DO NOT MODIFY WITHOUT AUTHORIZATION
+ * ============================================================================
+ *
+ * Each plugin container has exactly 3 mounts (2 for plugins without output):
+ *
+ *   1. /files              (READ-ONLY)  - Shared media files, read access only
+ *   2. /cache              (READ-WRITE) - Plugin-specific cache folder
+ *   3. /files/plugin/<id>  (READ-WRITE) - Plugin output folder (if needed)
+ *
+ * This plugin (file-info) only requires mounts 1 and 2:
+ *   - /files (RO) - to read files for type/size detection
+ *   - /cache (RW) - to cache file info results
+ *
+ * SECURITY: Plugins must NEVER write to /files directly.
+ * All write operations go to /cache or /files/plugin/<id> only.
+ *
+ * ============================================================================
  */
 
 import Fastify from 'fastify';

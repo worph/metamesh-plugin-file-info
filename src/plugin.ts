@@ -3,14 +3,22 @@
  *
  * Extracts basic file information: type, MIME type, and size.
  * This is the first plugin in the processing chain.
+ *
+ * Matches old FileProcessor output:
+ * - fileType
+ * - mimeType
+ * - sizeByte
+ * - fileName
+ * - extension
  */
 
-import { stat } from 'fs/promises';
-import { basename, extname } from 'path';
-import { fileTypeFromFile } from 'file-type';
-import { lookup as mimeTypeLookup } from 'mime-types';
+import { promises as fs } from 'fs';
+import * as path from 'path';
+import { FileType } from '@metazla/filename-tools';
 import type { PluginManifest, ProcessRequest, CallbackPayload } from './types.js';
 import { MetaCoreClient } from './meta-core-client.js';
+
+const fileType = new FileType();
 
 export const manifest: PluginManifest = {
     id: 'file-info',
@@ -24,12 +32,6 @@ export const manifest: PluginManifest = {
     defaultQueue: 'fast',
     timeout: 30000,
     schema: {
-        privateFilePath: {
-            label: 'Original File Path',
-            type: 'string',
-            readonly: true,
-            hint: 'Physical path on disk (used by Stremio addon and FUSE)',
-        },
         fileType: {
             label: 'File Type',
             type: 'string',
@@ -59,41 +61,6 @@ export const manifest: PluginManifest = {
     config: {},
 };
 
-// File type detection based on extension (matching @metazla/filename-tools)
-// Note: Images are classified as 'document' not 'image' per original design
-const EXTENSION_MAPPINGS: Record<string, string> = {
-    // Video
-    'mp4': 'video', 'mkv': 'video', 'webm': 'video', 'avi': 'video',
-    'mov': 'video', 'wmv': 'video', 'flv': 'video', 'm4v': 'video',
-    'mpg': 'video', 'mpeg': 'video', '3gp': 'video', '3g2': 'video',
-    'f4v': 'video', 'm2ts': 'video', 'mts': 'video', 'ts': 'video',
-    'vob': 'video', 'ogm': 'video', 'divx': 'video', 'xvid': 'video',
-    // Audio
-    'mp3': 'audio', 'wav': 'audio', 'flac': 'audio', 'aac': 'audio',
-    'ogg': 'audio', 'm4a': 'audio',
-    // Document (includes images per original design)
-    'pdf': 'document', 'doc': 'document', 'docx': 'document',
-    'ppt': 'document', 'pptx': 'document', 'xls': 'document',
-    'xlsx': 'document', 'txt': 'document', 'rtf': 'document',
-    // Images are classified as 'document' per original library
-    'jpg': 'document', 'jpeg': 'document', 'png': 'document',
-    'gif': 'document', 'bmp': 'document', 'tif': 'document',
-    'tiff': 'document', 'svg': 'document', 'webp': 'document',
-    // Archive
-    'zip': 'archive', 'rar': 'archive', '7z': 'archive',
-    'tar': 'archive', 'gz': 'archive', 'bz2': 'archive', 'xz': 'archive',
-    // Subtitles
-    'srt': 'subtitle', 'sub': 'subtitle', 'sbv': 'subtitle', 'vtt': 'subtitle',
-    // Torrent
-    'torrent': 'torrent',
-};
-
-function getFileTypeFromExtension(ext: string): string {
-    if (!ext) return 'undefined';
-    const lowerExt = ext.toLowerCase();
-    return EXTENSION_MAPPINGS[lowerExt] || 'other';
-}
-
 export async function process(
     request: ProcessRequest,
     sendCallback: (payload: CallbackPayload) => Promise<void>
@@ -104,44 +71,27 @@ export async function process(
     try {
         const { cid, filePath } = request;
 
-        // Get file stats
-        const stats = await stat(filePath);
-
-        // Get file name and extension
-        const fileName = basename(filePath);
-        const extension = extname(filePath).slice(1).toLowerCase();
-
-        // Determine file type
-        let fileType = getFileTypeFromExtension(extension);
-
-        // Try to get MIME type from file magic bytes
-        let mimeType: string | undefined;
-        try {
-            const detected = await fileTypeFromFile(filePath);
-            if (detected) {
-                mimeType = detected.mime;
-            }
-        } catch {
-            // Fallback to extension-based lookup
+        // Get file type (video, audio, image, etc.) - matches old FileProcessor
+        const typeResult = await fileType.getFileType(filePath);
+        if (typeResult) {
+            await metaCore.setProperty(cid, 'fileType', typeResult);
         }
 
-        // Fallback MIME type lookup by extension
-        if (!mimeType) {
-            mimeType = mimeTypeLookup(extension) || 'application/octet-stream';
+        // Get MIME type - matches old FileProcessor
+        const mimeType = await fileType.getMimeTypeFromFile(filePath);
+        if (mimeType) {
+            await metaCore.setProperty(cid, 'mimeType', mimeType);
         }
 
-        // Prepare metadata
-        const metadata = {
-            fileType,
-            mimeType,
-            sizeByte: String(stats.size),
-            fileName,
-            extension,
-            filePath, // Store the file path for other plugins/services
-        };
+        // Get file size - matches old FileProcessor
+        const stats = await fs.stat(filePath);
+        await metaCore.setProperty(cid, 'sizeByte', String(stats.size));
 
-        // Write metadata to meta-core
-        await metaCore.mergeMetadata(cid, metadata);
+        // Also store filename and extension for convenience - matches old FileProcessor
+        const fileName = path.basename(filePath);
+        const extension = path.extname(filePath).slice(1).toLowerCase();
+        await metaCore.setProperty(cid, 'fileName', fileName);
+        await metaCore.setProperty(cid, 'extension', extension);
 
         const duration = Date.now() - startTime;
         console.log(`[file-info] Processed ${fileName} in ${duration}ms`);
@@ -150,7 +100,6 @@ export async function process(
             taskId: request.taskId,
             status: 'completed',
             duration,
-            metadata, // Include metadata in callback as fallback
         });
     } catch (error) {
         const duration = Date.now() - startTime;
