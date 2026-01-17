@@ -10,15 +10,62 @@
  * - sizeByte
  * - fileName
  * - extension
+ *
+ * FILE ACCESS:
+ * - Uses WebDAV client when WEBDAV_URL is set (containerized mode)
+ * - Falls back to direct filesystem access (local development)
  */
 
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { fileTypeFromBuffer } from 'file-type';
 import { FileType } from '@metazla/filename-tools';
 import type { PluginManifest, ProcessRequest, CallbackPayload } from './types.js';
 import { MetaCoreClient } from './meta-core-client.js';
+import { createWebDAVClient, WebDAVClient } from './webdav-client.js';
 
 const fileType = new FileType();
+
+// Initialize WebDAV client if WEBDAV_URL is set
+const webdavClient = createWebDAVClient();
+if (webdavClient) {
+    console.log('[file-info] Using WebDAV for file access');
+} else {
+    console.log('[file-info] Using direct filesystem access');
+}
+
+/**
+ * Get MIME type from file via WebDAV (reads first 4KB for magic bytes)
+ */
+async function getMimeTypeViaWebDAV(client: WebDAVClient, filePath: string): Promise<string | undefined> {
+    try {
+        // Read first 4KB for magic byte detection
+        const buffer = await client.readBytes(filePath, 0, 4095);
+        const result = await fileTypeFromBuffer(buffer);
+        return result?.mime;
+    } catch (error) {
+        console.warn(`[file-info] Failed to detect MIME type via WebDAV: ${error}`);
+        return undefined;
+    }
+}
+
+/**
+ * Get file type using MIME type and extension mappings
+ */
+async function getFileTypeViaWebDAV(client: WebDAVClient, filePath: string): Promise<string> {
+    const mimeType = await getMimeTypeViaWebDAV(client, filePath);
+    const extensionType = fileType.getFileTypeFromExtension(filePath);
+
+    if (mimeType) {
+        // Use the FileType class's mime type mapping
+        const mimeBasedType = (fileType as any).mimeTypeMappings?.[mimeType];
+        if (mimeBasedType && mimeBasedType !== 'undefined') {
+            return mimeBasedType;
+        }
+    }
+
+    return extensionType;
+}
 
 export const manifest: PluginManifest = {
     id: 'file-info',
@@ -71,30 +118,59 @@ export async function process(
     try {
         const { cid, filePath } = request;
 
-        // Get file type (video, audio, image, etc.) - matches old FileProcessor
-        const typeResult = await fileType.getFileType(filePath);
+        // Extract filename and extension (works for both filesystem and WebDAV)
+        const fileName = path.basename(filePath);
+        const extension = path.extname(filePath).slice(1).toLowerCase();
+
+        let typeResult: string | undefined;
+        let mimeType: string | undefined;
+        let fileSize: number;
+
+        if (webdavClient) {
+            // ============================================================
+            // WebDAV Mode: Access files via HTTP
+            // ============================================================
+
+            // Get file stats (size) via HTTP HEAD
+            const stats = await webdavClient.stat(filePath);
+            fileSize = stats.size;
+
+            // Get MIME type via HTTP Range request (reads first 4KB for magic bytes)
+            mimeType = await getMimeTypeViaWebDAV(webdavClient, filePath);
+
+            // Get file type from MIME type or extension
+            typeResult = await getFileTypeViaWebDAV(webdavClient, filePath);
+
+        } else {
+            // ============================================================
+            // Filesystem Mode: Direct file access (local development)
+            // ============================================================
+
+            // Get file type (video, audio, image, etc.)
+            typeResult = await fileType.getFileType(filePath);
+
+            // Get MIME type
+            mimeType = await fileType.getMimeTypeFromFile(filePath);
+
+            // Get file size
+            const stats = await fs.stat(filePath);
+            fileSize = stats.size;
+        }
+
+        // Store metadata via meta-core API
         if (typeResult) {
             await metaCore.setProperty(cid, 'fileType', typeResult);
         }
-
-        // Get MIME type - matches old FileProcessor
-        const mimeType = await fileType.getMimeTypeFromFile(filePath);
         if (mimeType) {
             await metaCore.setProperty(cid, 'mimeType', mimeType);
         }
-
-        // Get file size - matches old FileProcessor
-        const stats = await fs.stat(filePath);
-        await metaCore.setProperty(cid, 'sizeByte', String(stats.size));
-
-        // Also store filename and extension for convenience - matches old FileProcessor
-        const fileName = path.basename(filePath);
-        const extension = path.extname(filePath).slice(1).toLowerCase();
+        await metaCore.setProperty(cid, 'sizeByte', String(fileSize));
         await metaCore.setProperty(cid, 'fileName', fileName);
         await metaCore.setProperty(cid, 'extension', extension);
 
         const duration = Date.now() - startTime;
-        console.log(`[file-info] Processed ${fileName} in ${duration}ms`);
+        const mode = webdavClient ? 'WebDAV' : 'filesystem';
+        console.log(`[file-info] Processed ${fileName} in ${duration}ms (${mode})`);
 
         await sendCallback({
             taskId: request.taskId,

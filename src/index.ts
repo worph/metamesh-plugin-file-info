@@ -2,21 +2,24 @@
  * MetaMesh Plugin: file-info
  *
  * ============================================================================
- * PLUGIN MOUNT ARCHITECTURE - DO NOT MODIFY WITHOUT AUTHORIZATION
+ * PLUGIN FILE ACCESS ARCHITECTURE - WebDAV
  * ============================================================================
  *
- * Each plugin container has exactly 3 mounts (2 for plugins without output):
+ * Plugins access files via WebDAV served by meta-sort nginx:
  *
- *   1. /files              (READ-ONLY)  - Shared media files, read access only
- *   2. /cache              (READ-WRITE) - Plugin-specific cache folder
- *   3. /files/plugin/<id>  (READ-WRITE) - Plugin output folder (if needed)
+ *   WEBDAV_URL env var: http://meta-sort-dev/webdav
  *
- * This plugin (file-info) only requires mounts 1 and 2:
- *   - /files (RO) - to read files for type/size detection
- *   - /cache (RW) - to cache file info results
+ *   Endpoints:
+ *     GET  /webdav/watch/...   - Read media files
+ *     GET  /webdav/plugin/...  - Read plugin output
+ *     PUT  /webdav/plugin/...  - Write plugin output
+ *     HEAD /webdav/...         - Get file stats (size, mtime)
  *
- * SECURITY: Plugins must NEVER write to /files directly.
- * All write operations go to /cache or /files/plugin/<id> only.
+ * This plugin (file-info) uses:
+ *   - HEAD requests for file size
+ *   - Range GET requests for MIME type detection (magic bytes)
+ *
+ * FALLBACK: If WEBDAV_URL is not set, uses direct filesystem access.
  *
  * ============================================================================
  */

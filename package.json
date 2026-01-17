@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "fastify": "^5.0.0",
-    "@metazla/filename-tools": "github:worph/filename-tool"
+    "@metazla/filename-tools": "github:worph/filename-tool",
+    "file-type": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
