@@ -175,14 +175,12 @@ export class WebDAVClient {
 
 /**
  * Create a WebDAV client from environment variables
+ * Returns null if WEBDAV_URL is not set (plugin will use direct filesystem access)
  */
 export function createWebDAVClient(): WebDAVClient | null {
     const webdavUrl = process.env.WEBDAV_URL;
-
     if (!webdavUrl) {
-        console.warn('[webdav-client] WEBDAV_URL not set, WebDAV client unavailable');
         return null;
     }
-
     return new WebDAVClient(webdavUrl);
 }

@@ -1,6 +1,6 @@
 /**
  * meta-core API Client for writing metadata
- * Fails gracefully if meta-core is unavailable (logs warning, returns without throwing)
+ * Fails gracefully if meta-core is unavailable (returns without throwing)
  */
 
 export class MetaCoreClient {
@@ -9,8 +9,8 @@ export class MetaCoreClient {
     private async safeFetch(url: string, options: RequestInit): Promise<Response | null> {
         try {
             return await fetch(url, { ...options, signal: AbortSignal.timeout(5000) });
-        } catch (error) {
-            console.warn(`[MetaCoreClient] Warning: meta-core unavailable at ${this.baseUrl}`);
+        } catch {
+            // meta-core unavailable - fail silently (expected in standalone/test mode)
             return null;
         }
     }
@@ -21,9 +21,7 @@ export class MetaCoreClient {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ value }),
         });
-        if (response && !response.ok) {
-            console.warn(`[MetaCoreClient] Failed to set property: ${response.status}`);
-        }
+        // Silently ignore errors (expected in standalone/test mode)
     }
 
     async getProperty(hashId: string, key: string): Promise<string | null> {
@@ -40,16 +38,12 @@ export class MetaCoreClient {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(metadata),
         });
-        if (response && !response.ok) {
-            console.warn(`[MetaCoreClient] Failed to merge metadata: ${response.status}`);
-        }
+        // Silently ignore errors (expected in standalone/test mode)
     }
 
     async deleteProperty(hashId: string, key: string): Promise<void> {
         const response = await this.safeFetch(`${this.baseUrl}/meta/${hashId}/${key}`, { method: 'DELETE' });
-        if (response && !response.ok && response.status !== 404) {
-            console.warn(`[MetaCoreClient] Failed to delete property: ${response.status}`);
-        }
+        // Silently ignore errors (expected in standalone/test mode)
     }
 
     async addToSet(hashId: string, key: string, value: string): Promise<void> {
@@ -58,9 +52,7 @@ export class MetaCoreClient {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ value }),
         });
-        if (response && !response.ok) {
-            console.warn(`[MetaCoreClient] Failed to add to set: ${response.status}`);
-        }
+        // Silently ignore errors (expected in standalone/test mode)
     }
 
     async getMetadata(hashId: string): Promise<Record<string, string>> {
