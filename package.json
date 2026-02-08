@@ -1,6 +1,7 @@
 {
   "name": "@metazla/plugin-file-info",
   "version": "1.0.0",
+  "packageManager": "pnpm@10.28.0",
   "description": "MetaMesh plugin: Extracts basic file information (type, MIME, size)",
   "type": "module",
   "main": "dist/index.js",
