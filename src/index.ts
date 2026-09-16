@@ -33,7 +33,7 @@ import type {
     ConfigureRequest,
     ConfigureResponse,
 } from './types.js';
-import { manifest, process as processFile } from './plugin.js';
+import { manifest, process as processFile, configure } from './plugin.js';
 
 const app = Fastify({ logger: true });
 let ready = false;
@@ -53,6 +53,7 @@ app.get('/manifest', async () => manifest);
 app.post<{ Body: ConfigureRequest }>('/configure', async (request): Promise<ConfigureResponse> => {
     try {
         pluginConfig = request.body.config || {};
+        configure(pluginConfig);
         console.log('[file-info] Configuration updated');
         return { status: 'ok' };
     } catch (error) {

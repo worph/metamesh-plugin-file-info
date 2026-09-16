@@ -105,8 +105,56 @@ export const manifest: PluginManifest = {
             readonly: true,
         },
     },
-    config: {},
+    config: {
+        forceRecompute: { type: 'boolean', label: 'Force Recompute', default: false },
+    },
 };
+
+/** Overwrite `fileName` even when another writer already set one. Default off. */
+let forceRecompute = false;
+
+export function configure(config: Record<string, unknown>): void {
+    forceRecompute = config.forceRecompute === true;
+    console.log(`[file-info] Config: forceRecompute=${forceRecompute}`);
+}
+
+/**
+ * Whether we may write `fileName` on this record.
+ *
+ * `fileName` has **two writers** (METADATA_KEYS.md §`fileName`): this plugin,
+ * which knows the on-disk basename, and the indexer feeders, which emit the raw
+ * release string at ingest. They meet on one record whenever meta-share
+ * materialises a search hit into a tree meta-core watches — the bytes' midhash
+ * is the record's content CID, so this plugin lands on the record the feeder
+ * already wrote.
+ *
+ * A Usenet posting's on-disk name is the poster's, and posters obfuscate it
+ * (`9765de45fa2d4522a80d01363d3c0919.mkv`). Writing it unconditionally destroyed
+ * the only readable name the record had, in a last-writer-wins race that showed
+ * up as hex on meta-watch's source rows.
+ *
+ * Precedence, mirroring the `still` rule the registry already legislates: the
+ * writer that knows less yields, and it yields by skipping a record that already
+ * carries a value. We know less — a basename is a container's filing detail,
+ * a release string is the release's identity.
+ *
+ * The record is re-read over the network rather than trusted from
+ * `existingMeta`: that map is delivered nested for grouped keys, and it is
+ * snapshotted before dispatch. `existingMeta` is the fallback for standalone /
+ * test mode, where `getProperty` cannot reach meta-core and answers `null`.
+ */
+async function mayWriteFileName(
+    metaCore: MetaCoreClient,
+    request: ProcessRequest,
+    cid: string,
+    fileName: string
+): Promise<boolean> {
+    if (forceRecompute) return true;
+    const existing = (await metaCore.getProperty(cid, 'fileName')) ?? request.existingMeta?.fileName ?? null;
+    if (!existing || existing === fileName) return true;
+    console.log(`[file-info] Keeping existing fileName "${existing}" (not overwriting with "${fileName}")`);
+    return false;
+}
 
 export async function process(
     request: ProcessRequest,
@@ -165,7 +213,12 @@ export async function process(
             await metaCore.setProperty(cid, 'mimeType', mimeType);
         }
         await metaCore.setProperty(cid, 'sizeByte', String(fileSize));
-        await metaCore.setProperty(cid, 'fileName', fileName);
+        if (await mayWriteFileName(metaCore, request, cid, fileName)) {
+            await metaCore.setProperty(cid, 'fileName', fileName);
+        }
+        // `extension` is unguarded on purpose: METADATA_KEYS.md names exactly one
+        // writer for it (this plugin), so there is nothing to yield to — and it
+        // describes the bytes on disk, which is precisely what we are looking at.
         await metaCore.setProperty(cid, 'extension', extension);
 
         const duration = Date.now() - startTime;
